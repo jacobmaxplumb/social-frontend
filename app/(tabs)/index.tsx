@@ -9,6 +9,8 @@ export default function FeedScreen() {
   const [posts, setPosts] = useState<Post[]>(mockPosts);
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
+  const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
+  console.log(likedPosts)
 
   const toggleComments = (postId: string) => {
     const newExpanded = new Set(expandedComments);
@@ -18,6 +20,30 @@ export default function FeedScreen() {
       newExpanded.add(postId);
     }
     setExpandedComments(newExpanded);
+  };
+
+  const handleLike = (postId: string) => {
+    const isLiked = likedPosts.has(postId);
+    
+    setPosts(posts.map(post => {
+      if (post.id === postId) {
+        const currentLikes = post.likes || 0;
+        return {
+          ...post,
+          likes: isLiked ? currentLikes - 1 : currentLikes + 1,
+        };
+      }
+      return post;
+    }));
+
+    // Toggle liked state
+    const newLikedPosts = new Set(likedPosts);
+    if (isLiked) {
+      newLikedPosts.delete(postId);
+    } else {
+      newLikedPosts.add(postId);
+    }
+    setLikedPosts(newLikedPosts);
   };
 
   const handleAddComment = (postId: string) => {
@@ -66,6 +92,8 @@ export default function FeedScreen() {
     const isCommentsExpanded = expandedComments.has(post.id);
     const commentCount = post.comments?.length || 0;
     const commentInput = commentInputs[post.id] || '';
+    const isLiked = likedPosts.has(post.id);
+    const likeCount = post.likes || 0;
 
     return (
       <View key={post.id} style={styles.postCard}>
@@ -85,9 +113,18 @@ export default function FeedScreen() {
         <Text style={styles.postText}>{post.text}</Text>
         
         <View style={styles.postActions}>
-          <TouchableOpacity style={styles.actionButton}>
-            <Ionicons name="heart-outline" size={20} color="#666" />
-            <Text style={styles.actionText}>{post.likes || 0}</Text>
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() => handleLike(post.id)}
+          >
+            <Ionicons 
+              name={isLiked ? "heart" : "heart-outline"} 
+              size={20} 
+              color={isLiked ? "#FF3B30" : "#666"} 
+            />
+            <Text style={[styles.actionText, isLiked && styles.likedActionText]}>
+              {likeCount}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity 
             style={styles.actionButton}
@@ -249,6 +286,10 @@ const styles = StyleSheet.create({
   },
   activeActionText: {
     color: '#007AFF',
+    fontWeight: '600',
+  },
+  likedActionText: {
+    color: '#FF3B30',
     fontWeight: '600',
   },
   commentsSection: {

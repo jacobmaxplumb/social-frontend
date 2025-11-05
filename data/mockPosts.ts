@@ -6,6 +6,7 @@ export interface Comment {
   profileImage: string;
   text: string;
   timestamp: string;
+  likes?: number;
 }
 
 export interface Post {
@@ -33,6 +34,7 @@ export const mockPosts: Post[] = [
         profileImage: '👤',
         text: 'Looks amazing! Where was this?',
         timestamp: '1h ago',
+        likes: 3,
       },
       {
         id: 'c2',
@@ -40,6 +42,7 @@ export const mockPosts: Post[] = [
         profileImage: '👤',
         text: 'Beautiful view! 🏔️',
         timestamp: '30m ago',
+        likes: 1,
       },
     ],
   },
@@ -57,6 +60,7 @@ export const mockPosts: Post[] = [
         profileImage: '👤',
         text: 'Same here! Coffee + code = perfect combo ☕💻',
         timestamp: '3h ago',
+        likes: 5,
       },
     ],
   },
@@ -83,6 +87,7 @@ export const mockPosts: Post[] = [
         profileImage: '👤',
         text: 'Stunning! 🌅',
         timestamp: '7h ago',
+        likes: 2,
       },
       {
         id: 'c5',
@@ -90,6 +95,7 @@ export const mockPosts: Post[] = [
         profileImage: '👤',
         text: 'So peaceful!',
         timestamp: '6h ago',
+        likes: 4,
       },
     ],
   },
@@ -116,6 +122,7 @@ export const mockPosts: Post[] = [
         profileImage: '👤',
         text: 'Welcome to the React Native community! 🎉',
         timestamp: '23h ago',
+        likes: 7,
       },
       {
         id: 'c7',
@@ -123,6 +130,7 @@ export const mockPosts: Post[] = [
         profileImage: '👤',
         text: 'You\'re going to love it!',
         timestamp: '22h ago',
+        likes: 2,
       },
     ],
   },

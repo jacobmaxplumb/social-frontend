@@ -11,6 +11,7 @@ export default function FeedScreen() {
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
+  const [likedComments, setLikedComments] = useState<Set<string>>(new Set());
   const [newPostText, setNewPostText] = useState('');
   const [isCreatingPost, setIsCreatingPost] = useState(false);
 
@@ -70,6 +71,36 @@ export default function FeedScreen() {
     setIsCreatingPost(false);
   };
 
+  const handleLikeComment = (postId: string, commentId: string) => {
+    const isLiked = likedComments.has(commentId);
+    
+    setPosts(posts.map(post => {
+      if (post.id === postId) {
+        const updatedComments = post.comments?.map(comment => {
+          if (comment.id === commentId) {
+            const currentLikes = comment.likes || 0;
+            return {
+              ...comment,
+              likes: isLiked ? currentLikes - 1 : currentLikes + 1,
+            };
+          }
+          return comment;
+        });
+        return { ...post, comments: updatedComments };
+      }
+      return post;
+    }));
+
+    // Toggle liked state
+    const newLikedComments = new Set(likedComments);
+    if (isLiked) {
+      newLikedComments.delete(commentId);
+    } else {
+      newLikedComments.add(commentId);
+    }
+    setLikedComments(newLikedComments);
+  };
+
   const handleAddComment = (postId: string) => {
     const commentText = commentInputs[postId]?.trim();
     if (!commentText) return;
@@ -80,6 +111,7 @@ export default function FeedScreen() {
       profileImage: '👤',
       text: commentText,
       timestamp: 'Just now',
+      likes: 0,
     };
 
     setPosts(posts.map(post => 
@@ -97,20 +129,45 @@ export default function FeedScreen() {
     }
   };
 
-  const renderComment = (comment: Comment) => (
-    <View key={comment.id} style={styles.commentItem}>
-      <View style={styles.commentProfileImageContainer}>
-        <Text style={styles.commentProfileImage}>{comment.profileImage}</Text>
-      </View>
-      <View style={styles.commentContent}>
-        <View style={styles.commentBubble}>
-          <Text style={styles.commentUsername}>{comment.username}</Text>
-          <Text style={styles.commentText}>{comment.text}</Text>
+  const renderComment = (comment: Comment, postId: string) => {
+    const isLiked = likedComments.has(comment.id);
+    const likeCount = comment.likes || 0;
+
+    return (
+      <View key={comment.id} style={styles.commentItem}>
+        <View style={styles.commentProfileImageContainer}>
+          <Text style={styles.commentProfileImage}>{comment.profileImage}</Text>
         </View>
-        <Text style={styles.commentTimestamp}>{comment.timestamp}</Text>
+        <View style={styles.commentContent}>
+          <View style={styles.commentBubble}>
+            <Text style={styles.commentUsername}>{comment.username}</Text>
+            <Text style={styles.commentText}>{comment.text}</Text>
+          </View>
+          <View style={styles.commentFooter}>
+            <Text style={styles.commentTimestamp}>{comment.timestamp}</Text>
+            <TouchableOpacity
+              style={styles.commentLikeButton}
+              onPress={() => handleLikeComment(postId, comment.id)}
+            >
+              <Ionicons
+                name={isLiked ? "heart" : "heart-outline"}
+                size={14}
+                color={isLiked ? "#FF3B30" : "#999"}
+              />
+              {likeCount > 0 && (
+                <Text style={[
+                  styles.commentLikeCount,
+                  isLiked && styles.commentLikeCountLiked,
+                ]}>
+                  {likeCount}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   const renderPost = (post: Post) => {
     const isCommentsExpanded = expandedComments.has(post.id);
@@ -174,7 +231,7 @@ export default function FeedScreen() {
           <View style={styles.commentsSection}>
             {commentCount > 0 && (
               <View style={styles.commentsList}>
-                {post.comments?.map(renderComment)}
+                {post.comments?.map(comment => renderComment(comment, post.id))}
               </View>
             )}
             
@@ -410,10 +467,31 @@ const styles = StyleSheet.create({
     color: '#333',
     lineHeight: 20,
   },
+  commentFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
   commentTimestamp: {
     fontSize: 12,
     color: '#999',
     marginLeft: 4,
+  },
+  commentLikeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  commentLikeCount: {
+    fontSize: 12,
+    color: '#999',
+    marginLeft: 4,
+  },
+  commentLikeCountLiked: {
+    color: '#FF3B30',
+    fontWeight: '600',
   },
   addCommentContainer: {
     flexDirection: 'row',

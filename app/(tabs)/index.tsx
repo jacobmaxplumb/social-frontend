@@ -4,12 +4,15 @@ import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput
 import { Comment, mockPosts, Post } from '../../data/mockPosts';
 
 const CURRENT_USER = 'you'; // Mock current user
+const CURRENT_USER_PROFILE = '👤'; // Mock current user profile image
 
 export default function FeedScreen() {
   const [posts, setPosts] = useState<Post[]>(mockPosts);
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
+  const [newPostText, setNewPostText] = useState('');
+  const [isCreatingPost, setIsCreatingPost] = useState(false);
 
   const toggleComments = (postId: string) => {
     const newExpanded = new Set(expandedComments);
@@ -43,6 +46,28 @@ export default function FeedScreen() {
       newLikedPosts.add(postId);
     }
     setLikedPosts(newLikedPosts);
+  };
+
+  const handleCreatePost = () => {
+    const postText = newPostText.trim();
+    if (!postText) return;
+
+    const newPost: Post = {
+      id: `p${Date.now()}`,
+      username: CURRENT_USER,
+      profileImage: CURRENT_USER_PROFILE,
+      timestamp: 'Just now',
+      text: postText,
+      likes: 0,
+      comments: [],
+    };
+
+    // Add new post at the beginning of the array
+    setPosts([newPost, ...posts]);
+    
+    // Clear input and close
+    setNewPostText('');
+    setIsCreatingPost(false);
   };
 
   const handleAddComment = (postId: string) => {
@@ -196,6 +221,55 @@ export default function FeedScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
+        {/* Create Post Section */}
+        <View style={styles.createPostCard}>
+          <View style={styles.createPostHeader}>
+            <View style={styles.createPostProfileImageContainer}>
+              <Text style={styles.createPostProfileImage}>{CURRENT_USER_PROFILE}</Text>
+            </View>
+            <View style={styles.createPostInputContainer}>
+              <TextInput
+                style={styles.createPostInput}
+                placeholder="What's on your mind?"
+                placeholderTextColor="#999"
+                value={newPostText}
+                onChangeText={setNewPostText}
+                multiline
+                maxLength={1000}
+                onFocus={() => setIsCreatingPost(true)}
+              />
+            </View>
+          </View>
+          {(isCreatingPost || newPostText.trim().length > 0) && (
+            <View style={styles.createPostActions}>
+              <TouchableOpacity
+                style={styles.cancelPostButton}
+                onPress={() => {
+                  setNewPostText('');
+                  setIsCreatingPost(false);
+                }}
+              >
+                <Text style={styles.cancelPostText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.postButton,
+                  newPostText.trim().length === 0 && styles.postButtonDisabled,
+                ]}
+                onPress={handleCreatePost}
+                disabled={newPostText.trim().length === 0}
+              >
+                <Text style={[
+                  styles.postButtonText,
+                  newPostText.trim().length === 0 && styles.postButtonTextDisabled,
+                ]}>
+                  Post
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+
         {posts.map(renderPost)}
       </ScrollView>
     </KeyboardAvoidingView>
@@ -378,6 +452,83 @@ const styles = StyleSheet.create({
   sendButton: {
     marginLeft: 8,
     padding: 4,
+  },
+  createPostCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  createPostHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  createPostProfileImageContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#e0e0e0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  createPostProfileImage: {
+    fontSize: 24,
+  },
+  createPostInputContainer: {
+    flex: 1,
+    minHeight: 48,
+    justifyContent: 'center',
+  },
+  createPostInput: {
+    fontSize: 15,
+    color: '#000',
+    lineHeight: 22,
+    paddingVertical: 8,
+    maxHeight: 150,
+  },
+  createPostActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  cancelPostButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginRight: 8,
+  },
+  cancelPostText: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '600',
+  },
+  postButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 8,
+  },
+  postButtonDisabled: {
+    backgroundColor: '#e0e0e0',
+  },
+  postButtonText: {
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: '600',
+  },
+  postButtonTextDisabled: {
+    color: '#999',
   },
 });
 

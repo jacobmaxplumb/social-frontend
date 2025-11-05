@@ -10,7 +10,6 @@ export default function FeedScreen() {
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
-  console.log(likedPosts)
 
   const toggleComments = (postId: string) => {
     const newExpanded = new Set(expandedComments);

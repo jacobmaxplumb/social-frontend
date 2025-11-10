@@ -1,142 +1,288 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { Comment, mockPosts, Post } from '../../data/mockPosts';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { api } from '../../lib/api';
+import { useAuthStore } from '../../store/authStore';
+import type { ApiListResponse, Comment, Post } from '../../types/api';
 
-const CURRENT_USER = 'you'; // Mock current user
-const CURRENT_USER_PROFILE = '👤'; // Mock current user profile image
+type LikeResponse = {
+  liked: boolean;
+  likes: number;
+};
+
+const DEFAULT_PROFILE_IMAGE = '👤';
+
+const formatRelativeTime = (timestamp: string | undefined) => {
+  if (!timestamp) {
+    return '';
+  }
+
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const diffMs = Date.now() - date.getTime();
+  const diffSeconds = Math.round(diffMs / 1000);
+
+  if (diffSeconds < 60) {
+    return `${Math.max(diffSeconds, 1)}s ago`;
+  }
+
+  const diffMinutes = Math.round(diffSeconds / 60);
+  if (diffMinutes < 60) {
+    return `${diffMinutes}m ago`;
+  }
+
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `${diffHours}h ago`;
+  }
+
+  const diffDays = Math.round(diffHours / 24);
+  if (diffDays < 7) {
+    return `${diffDays}d ago`;
+  }
+
+  return date.toLocaleDateString();
+};
+
+const getDisplayTimestamp = (absolute: string, relative?: string) => {
+  return relative || formatRelativeTime(absolute) || absolute;
+};
 
 export default function FeedScreen() {
-  const [posts, setPosts] = useState<Post[]>(mockPosts);
+  const currentUser = useAuthStore((state) => state.user);
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
   const [commentInputs, setCommentInputs] = useState<Record<string, string>>({});
-  const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
-  const [likedComments, setLikedComments] = useState<Set<string>>(new Set());
   const [newPostText, setNewPostText] = useState('');
   const [isCreatingPost, setIsCreatingPost] = useState(false);
+  const [postSubmitting, setPostSubmitting] = useState(false);
+  const [postLikeLoading, setPostLikeLoading] = useState<Set<string>>(new Set());
+  const [commentSubmitting, setCommentSubmitting] = useState<Record<string, boolean>>({});
+  const [commentLikeLoading, setCommentLikeLoading] = useState<Set<string>>(new Set());
+
+  const currentUserProfile = useMemo(() => {
+    if (currentUser?.username) {
+      const firstCharacter = currentUser.username.trim()[0];
+      if (firstCharacter) {
+        return firstCharacter.toUpperCase();
+      }
+    }
+    return DEFAULT_PROFILE_IMAGE;
+  }, [currentUser]);
+
+  const fetchPosts = useCallback(
+    async (silent = false) => {
+      if (!silent) {
+        setLoading(true);
+      }
+      setError(null);
+
+      try {
+        const response = await api.get<ApiListResponse<Post>>('/posts', {
+          params: {
+            limit: 20,
+            offset: 0,
+          },
+        });
+
+        setPosts(response.data.data);
+      } catch (fetchError) {
+        setError('Failed to load posts. Pull to refresh to try again.');
+      } finally {
+        if (!silent) {
+          setLoading(false);
+        }
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    fetchPosts();
+  }, [fetchPosts]);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchPosts(true);
+    setRefreshing(false);
+  }, [fetchPosts]);
 
   const toggleComments = (postId: string) => {
-    const newExpanded = new Set(expandedComments);
-    if (newExpanded.has(postId)) {
-      newExpanded.delete(postId);
-    } else {
-      newExpanded.add(postId);
-    }
-    setExpandedComments(newExpanded);
-  };
-
-  const handleLike = (postId: string) => {
-    const isLiked = likedPosts.has(postId);
-    
-    setPosts(posts.map(post => {
-      if (post.id === postId) {
-        const currentLikes = post.likes || 0;
-        return {
-          ...post,
-          likes: isLiked ? currentLikes - 1 : currentLikes + 1,
-        };
+    setExpandedComments((prev) => {
+      const next = new Set(prev);
+      if (next.has(postId)) {
+        next.delete(postId);
+      } else {
+        next.add(postId);
       }
-      return post;
-    }));
+      return next;
+    });
+  };
 
-    // Toggle liked state
-    const newLikedPosts = new Set(likedPosts);
-    if (isLiked) {
-      newLikedPosts.delete(postId);
-    } else {
-      newLikedPosts.add(postId);
+  const handleLike = async (postId: string) => {
+    if (postLikeLoading.has(postId)) {
+      return;
     }
-    setLikedPosts(newLikedPosts);
+
+    setPostLikeLoading((prev) => new Set(prev).add(postId));
+
+    try {
+      const response = await api.post<LikeResponse>(`/posts/${postId}/like`);
+      setPosts((prevPosts) =>
+        prevPosts.map((post) =>
+          post.id === postId
+            ? {
+                ...post,
+                likes: response.data.likes,
+                likedByCurrentUser: response.data.liked,
+              }
+            : post,
+        ),
+      );
+    } catch (likeError) {
+      setError('Unable to update like. Please try again.');
+    } finally {
+      setPostLikeLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(postId);
+        return next;
+      });
+    }
   };
 
-  const handleCreatePost = () => {
-    const postText = newPostText.trim();
-    if (!postText) return;
+  const handleCreatePost = async () => {
+    const text = newPostText.trim();
+    if (!text || postSubmitting) {
+      return;
+    }
 
-    const newPost: Post = {
-      id: `p${Date.now()}`,
-      username: CURRENT_USER,
-      profileImage: CURRENT_USER_PROFILE,
-      timestamp: 'Just now',
-      text: postText,
-      likes: 0,
-      comments: [],
-    };
+    setPostSubmitting(true);
+    setError(null);
 
-    // Add new post at the beginning of the array
-    setPosts([newPost, ...posts]);
-    
-    // Clear input and close
-    setNewPostText('');
-    setIsCreatingPost(false);
+    try {
+      const response = await api.post<Post>('/posts', { text });
+      setPosts((prev) => [response.data, ...prev]);
+      setNewPostText('');
+      setIsCreatingPost(false);
+    } catch (createError) {
+      setError('Unable to create post. Please try again.');
+    } finally {
+      setPostSubmitting(false);
+    }
   };
 
-  const handleLikeComment = (postId: string, commentId: string) => {
-    const isLiked = likedComments.has(commentId);
-    
-    setPosts(posts.map(post => {
-      if (post.id === postId) {
-        const updatedComments = post.comments?.map(comment => {
-          if (comment.id === commentId) {
-            const currentLikes = comment.likes || 0;
-            return {
-              ...comment,
-              likes: isLiked ? currentLikes - 1 : currentLikes + 1,
-            };
+  const handleLikeComment = async (postId: string, commentId: string) => {
+    const loadingKey = `${postId}:${commentId}`;
+    if (commentLikeLoading.has(loadingKey)) {
+      return;
+    }
+
+    setCommentLikeLoading((prev) => new Set(prev).add(loadingKey));
+
+    try {
+      const response = await api.post<LikeResponse>(`/posts/${postId}/comments/${commentId}/like`);
+
+      setPosts((prevPosts) =>
+        prevPosts.map((post) => {
+          if (post.id !== postId) {
+            return post;
           }
-          return comment;
-        });
-        return { ...post, comments: updatedComments };
-      }
-      return post;
-    }));
 
-    // Toggle liked state
-    const newLikedComments = new Set(likedComments);
-    if (isLiked) {
-      newLikedComments.delete(commentId);
-    } else {
-      newLikedComments.add(commentId);
+          const updatedComments = post.comments?.map((comment) =>
+            comment.id === commentId
+              ? {
+                  ...comment,
+                  likes: response.data.likes,
+                  likedByCurrentUser: response.data.liked,
+                }
+              : comment,
+          );
+
+          return {
+            ...post,
+            comments: updatedComments,
+          };
+        }),
+      );
+    } catch (likeError) {
+      setError('Unable to update comment like. Please try again.');
+    } finally {
+      setCommentLikeLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(loadingKey);
+        return next;
+      });
     }
-    setLikedComments(newLikedComments);
   };
 
-  const handleAddComment = (postId: string) => {
-    const commentText = commentInputs[postId]?.trim();
-    if (!commentText) return;
+  const handleAddComment = async (postId: string) => {
+    const text = commentInputs[postId]?.trim();
+    if (!text) {
+      return;
+    }
 
-    const newComment: Comment = {
-      id: `c${Date.now()}`,
-      username: CURRENT_USER,
-      profileImage: '👤',
-      text: commentText,
-      timestamp: 'Just now',
-      likes: 0,
-    };
+    setCommentSubmitting((prev) => ({
+      ...prev,
+      [postId]: true,
+    }));
 
-    setPosts(posts.map(post => 
-      post.id === postId 
-        ? { ...post, comments: [...(post.comments || []), newComment] }
-        : post
-    ));
+    try {
+      const response = await api.post<Comment>(`/posts/${postId}/comments`, { text });
 
-    // Clear input
-    setCommentInputs({ ...commentInputs, [postId]: '' });
-    
-    // Expand comments if not already expanded
-    if (!expandedComments.has(postId)) {
-      setExpandedComments(new Set([...expandedComments, postId]));
+      setPosts((prevPosts) =>
+        prevPosts.map((post) =>
+          post.id === postId
+            ? {
+                ...post,
+                comments: [...(post.comments ?? []), response.data],
+              }
+            : post,
+        ),
+      );
+
+      setCommentInputs((prev) => ({
+        ...prev,
+        [postId]: '',
+      }));
+
+      setExpandedComments((prev) => new Set(prev).add(postId));
+    } catch (commentError) {
+      setError('Unable to add comment. Please try again.');
+    } finally {
+      setCommentSubmitting((prev) => ({
+        ...prev,
+        [postId]: false,
+      }));
     }
   };
 
   const renderComment = (comment: Comment, postId: string) => {
-    const isLiked = likedComments.has(comment.id);
     const likeCount = comment.likes || 0;
+    const isLiked = Boolean(comment.likedByCurrentUser);
+    const loadingKey = `${postId}:${comment.id}`;
+    const isProcessing = commentLikeLoading.has(loadingKey);
 
     return (
       <View key={comment.id} style={styles.commentItem}>
         <View style={styles.commentProfileImageContainer}>
-          <Text style={styles.commentProfileImage}>{comment.profileImage}</Text>
+          <Text style={styles.commentProfileImage}>{comment.profileImage || DEFAULT_PROFILE_IMAGE}</Text>
         </View>
         <View style={styles.commentContent}>
           <View style={styles.commentBubble}>
@@ -144,21 +290,26 @@ export default function FeedScreen() {
             <Text style={styles.commentText}>{comment.text}</Text>
           </View>
           <View style={styles.commentFooter}>
-            <Text style={styles.commentTimestamp}>{comment.timestamp}</Text>
+            <Text style={styles.commentTimestamp}>
+              {getDisplayTimestamp(comment.timestamp, comment.relativeTimestamp)}
+            </Text>
             <TouchableOpacity
               style={styles.commentLikeButton}
               onPress={() => handleLikeComment(postId, comment.id)}
+              disabled={isProcessing}
             >
               <Ionicons
-                name={isLiked ? "heart" : "heart-outline"}
+                name={isLiked ? 'heart' : 'heart-outline'}
                 size={14}
-                color={isLiked ? "#FF3B30" : "#999"}
+                color={isLiked ? '#FF3B30' : '#999'}
               />
               {likeCount > 0 && (
-                <Text style={[
-                  styles.commentLikeCount,
-                  isLiked && styles.commentLikeCountLiked,
-                ]}>
+                <Text
+                  style={[
+                    styles.commentLikeCount,
+                    isLiked && styles.commentLikeCountLiked,
+                  ]}
+                >
                   {likeCount}
                 </Text>
               )}
@@ -173,48 +324,53 @@ export default function FeedScreen() {
     const isCommentsExpanded = expandedComments.has(post.id);
     const commentCount = post.comments?.length || 0;
     const commentInput = commentInputs[post.id] || '';
-    const isLiked = likedPosts.has(post.id);
+    const isLiked = Boolean(post.likedByCurrentUser);
     const likeCount = post.likes || 0;
+    const isLikeLoading = postLikeLoading.has(post.id);
+    const isCommentSubmitting = commentSubmitting[post.id];
 
     return (
       <View key={post.id} style={styles.postCard}>
         <View style={styles.postHeader}>
           <View style={styles.profileImageContainer}>
-            <Text style={styles.profileImage}>{post.profileImage}</Text>
+            <Text style={styles.profileImage}>{post.profileImage || DEFAULT_PROFILE_IMAGE}</Text>
           </View>
           <View style={styles.postHeaderInfo}>
             <Text style={styles.username}>{post.username}</Text>
-            <Text style={styles.timestamp}>{post.timestamp}</Text>
+            <Text style={styles.timestamp}>
+              {getDisplayTimestamp(post.timestamp, post.relativeTimestamp)}
+            </Text>
           </View>
           <TouchableOpacity style={styles.moreButton}>
             <Ionicons name="ellipsis-horizontal" size={20} color="#666" />
           </TouchableOpacity>
         </View>
-        
+
         <Text style={styles.postText}>{post.text}</Text>
-        
+
         <View style={styles.postActions}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.actionButton}
             onPress={() => handleLike(post.id)}
+            disabled={isLikeLoading}
           >
-            <Ionicons 
-              name={isLiked ? "heart" : "heart-outline"} 
-              size={20} 
-              color={isLiked ? "#FF3B30" : "#666"} 
+            <Ionicons
+              name={isLiked ? 'heart' : 'heart-outline'}
+              size={20}
+              color={isLiked ? '#FF3B30' : '#666'}
             />
             <Text style={[styles.actionText, isLiked && styles.likedActionText]}>
               {likeCount}
             </Text>
           </TouchableOpacity>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.actionButton}
             onPress={() => toggleComments(post.id)}
           >
-            <Ionicons 
-              name={isCommentsExpanded ? "chatbubble" : "chatbubble-outline"} 
-              size={20} 
-              color={isCommentsExpanded ? "#007AFF" : "#666"} 
+            <Ionicons
+              name={isCommentsExpanded ? 'chatbubble' : 'chatbubble-outline'}
+              size={20}
+              color={isCommentsExpanded ? '#007AFF' : '#666'}
             />
             <Text style={[styles.actionText, isCommentsExpanded && styles.activeActionText]}>
               {commentCount}
@@ -226,19 +382,17 @@ export default function FeedScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Comments Section */}
         {isCommentsExpanded && (
           <View style={styles.commentsSection}>
             {commentCount > 0 && (
               <View style={styles.commentsList}>
-                {post.comments?.map(comment => renderComment(comment, post.id))}
+                {post.comments?.map((comment) => renderComment(comment, post.id))}
               </View>
             )}
-            
-            {/* Add Comment Input */}
+
             <View style={styles.addCommentContainer}>
               <View style={styles.addCommentProfileImageContainer}>
-                <Text style={styles.addCommentProfileImage}>👤</Text>
+                <Text style={styles.addCommentProfileImage}>{currentUserProfile}</Text>
               </View>
               <View style={styles.addCommentInputContainer}>
                 <TextInput
@@ -246,7 +400,12 @@ export default function FeedScreen() {
                   placeholder="Write a comment..."
                   placeholderTextColor="#999"
                   value={commentInput}
-                  onChangeText={(text) => setCommentInputs({ ...commentInputs, [post.id]: text })}
+                  onChangeText={(text) =>
+                    setCommentInputs((prev) => ({
+                      ...prev,
+                      [post.id]: text,
+                    }))
+                  }
                   multiline
                   maxLength={500}
                 />
@@ -254,8 +413,9 @@ export default function FeedScreen() {
                   <TouchableOpacity
                     style={styles.sendButton}
                     onPress={() => handleAddComment(post.id)}
+                    disabled={isCommentSubmitting}
                   >
-                    <Ionicons name="send" size={18} color="#007AFF" />
+                    <Ionicons name="send" size={18} color={isCommentSubmitting ? '#999' : '#007AFF'} />
                   </TouchableOpacity>
                 )}
               </View>
@@ -277,12 +437,14 @@ export default function FeedScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#007AFF" />
+        }
       >
-        {/* Create Post Section */}
         <View style={styles.createPostCard}>
           <View style={styles.createPostHeader}>
             <View style={styles.createPostProfileImageContainer}>
-              <Text style={styles.createPostProfileImage}>{CURRENT_USER_PROFILE}</Text>
+              <Text style={styles.createPostProfileImage}>{currentUserProfile}</Text>
             </View>
             <View style={styles.createPostInputContainer}>
               <TextInput
@@ -311,23 +473,46 @@ export default function FeedScreen() {
               <TouchableOpacity
                 style={[
                   styles.postButton,
-                  newPostText.trim().length === 0 && styles.postButtonDisabled,
+                  (newPostText.trim().length === 0 || postSubmitting) && styles.postButtonDisabled,
                 ]}
                 onPress={handleCreatePost}
-                disabled={newPostText.trim().length === 0}
+                disabled={newPostText.trim().length === 0 || postSubmitting}
               >
-                <Text style={[
-                  styles.postButtonText,
-                  newPostText.trim().length === 0 && styles.postButtonTextDisabled,
-                ]}>
-                  Post
+                <Text
+                  style={[
+                    styles.postButtonText,
+                    (newPostText.trim().length === 0 || postSubmitting) && styles.postButtonTextDisabled,
+                  ]}
+                >
+                  {postSubmitting ? 'Posting...' : 'Post'}
                 </Text>
               </TouchableOpacity>
             </View>
           )}
         </View>
 
-        {posts.map(renderPost)}
+        {error && (
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={() => fetchPosts()}>
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {loading && posts.length === 0 ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+          </View>
+        ) : (
+          posts.map(renderPost)
+        )}
+
+        {!loading && posts.length === 0 && !error && (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>No posts yet. Start the conversation!</Text>
+          </View>
+        )}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -607,6 +792,48 @@ const styles = StyleSheet.create({
   },
   postButtonTextDisabled: {
     color: '#999',
+  },
+  errorContainer: {
+    backgroundColor: '#ffecec',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#ffd6d6',
+  },
+  errorText: {
+    color: '#FF3B30',
+    fontSize: 14,
+    marginBottom: 12,
+  },
+  retryButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#FF3B30',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  loadingContainer: {
+    paddingVertical: 32,
+    alignItems: 'center',
+  },
+  emptyState: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 16,
+  },
+  emptyStateText: {
+    fontSize: 16,
+    color: '#999',
+    textAlign: 'center',
   },
 });
 

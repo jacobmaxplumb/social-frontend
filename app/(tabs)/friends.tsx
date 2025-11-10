@@ -1,111 +1,173 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { Friend, FriendSuggestion, PendingRequest, mockCurrentFriends, mockFriendSuggestions, mockPendingRequests } from '../../data/mockFriends';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+    ActivityIndicator,
+    Alert,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
+} from 'react-native';
+import { api } from '../../lib/api';
+import type { ApiListResponse, Friend, FriendSuggestion, PendingRequest } from '../../types/api';
 
 type TabType = 'current' | 'suggested' | 'pending';
 
+const DEFAULT_PROFILE_IMAGE = '👤';
+
+const getTimestamp = (sentAt: string, relative?: string) => {
+  if (relative) {
+    return relative;
+  }
+  const date = new Date(sentAt);
+  if (Number.isNaN(date.getTime())) {
+    return sentAt;
+  }
+  return date.toLocaleString();
+};
+
 export default function FriendsScreen() {
   const [activeTab, setActiveTab] = useState<TabType>('current');
-  const [friends, setFriends] = useState<Friend[]>(mockCurrentFriends);
-  const [suggestions, setSuggestions] = useState<FriendSuggestion[]>(mockFriendSuggestions);
-  const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>(mockPendingRequests);
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [suggestions, setSuggestions] = useState<FriendSuggestion[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [addFriendLoading, setAddFriendLoading] = useState<Set<string>>(new Set());
 
-  const handleAddFriend = (suggestionId: string) => {
-    const suggestion = suggestions.find(s => s.id === suggestionId);
-    if (suggestion) {
-      // Move to pending requests (outgoing)
-      const newPendingRequest: PendingRequest = {
-        id: suggestion.id,
-        username: suggestion.username,
-        profileImage: suggestion.profileImage,
-        type: 'outgoing',
-        mutualFriends: suggestion.mutualFriends,
-        sentAt: 'Just now',
-      };
-      setPendingRequests([...pendingRequests, newPendingRequest]);
-      // Remove from suggestions
-      setSuggestions(suggestions.filter(s => s.id !== suggestionId));
+  const fetchFriends = useCallback(async () => {
+    const response = await api.get<ApiListResponse<Friend>>('/friends', {
+      params: { limit: 50, offset: 0 },
+    });
+    setFriends(response.data.data);
+  }, []);
+
+  const fetchSuggestions = useCallback(async () => {
+    const response = await api.get<ApiListResponse<FriendSuggestion>>('/friends/suggestions', {
+      params: { limit: 50, offset: 0 },
+    });
+    setSuggestions(response.data.data);
+  }, []);
+
+  const fetchPendingRequests = useCallback(async () => {
+    const response = await api.get<ApiListResponse<PendingRequest>>('/friends/requests', {
+      params: { limit: 50, offset: 0 },
+    });
+    setPendingRequests(response.data.data);
+  }, []);
+
+  const fetchAll = useCallback(
+    async (silent = false) => {
+      if (!silent) {
+        setLoading(true);
+      }
+      setError(null);
+
+      try {
+        await Promise.all([fetchFriends(), fetchSuggestions(), fetchPendingRequests()]);
+      } catch (fetchError) {
+        setError('Unable to load friends. Pull to refresh to try again.');
+      } finally {
+        if (!silent) {
+          setLoading(false);
+        }
+      }
+    },
+    [fetchFriends, fetchPendingRequests, fetchSuggestions],
+  );
+
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchAll(true);
+    setRefreshing(false);
+  }, [fetchAll]);
+
+  const handleAddFriend = async (suggestionId: string) => {
+    if (addFriendLoading.has(suggestionId)) {
+      return;
+    }
+
+    const suggestion = suggestions.find((item) => item.id === suggestionId);
+    if (!suggestion) {
+      return;
+    }
+
+    setAddFriendLoading((prev) => new Set(prev).add(suggestionId));
+    setError(null);
+
+    try {
+      await api.post('/friends/request', { username: suggestion.username });
+      await Promise.all([fetchSuggestions(), fetchPendingRequests()]);
+    } catch (addError) {
+      setError('Unable to send friend request. Please try again.');
+    } finally {
+      setAddFriendLoading((prev) => {
+        const next = new Set(prev);
+        next.delete(suggestionId);
+        return next;
+      });
     }
   };
 
-  const handleAcceptRequest = (requestId: string) => {
-    const request = pendingRequests.find(r => r.id === requestId && r.type === 'incoming');
-    if (request) {
-      // Add to friends list
-      const newFriend: Friend = {
-        id: request.id,
-        username: request.username,
-        profileImage: request.profileImage,
-        status: 'offline',
-        mutualFriends: request.mutualFriends,
-      };
-      setFriends([...friends, newFriend]);
-      // Remove from pending requests
-      setPendingRequests(pendingRequests.filter(r => r.id !== requestId));
-    }
+  const showUnavailableAction = () => {
+    Alert.alert(
+      'Action not available',
+      'Accepting or declining requests requires backend support that is not yet implemented.',
+    );
   };
 
-  const handleDeclineRequest = (requestId: string) => {
-    // Remove from pending requests
-    setPendingRequests(pendingRequests.filter(r => r.id !== requestId));
-  };
-
-  const handleCancelRequest = (requestId: string) => {
-    // Remove from pending requests
-    setPendingRequests(pendingRequests.filter(r => r.id !== requestId));
-  };
-
-  // Filter friends based on search query
   const filteredFriends = useMemo(() => {
     if (!searchQuery.trim()) {
       return friends;
     }
     const query = searchQuery.toLowerCase();
-    return friends.filter(friend => 
-      friend.username.toLowerCase().includes(query)
-    );
+    return friends.filter((friend) => friend.username.toLowerCase().includes(query));
   }, [friends, searchQuery]);
 
-  // Filter suggestions based on search query
   const filteredSuggestions = useMemo(() => {
     if (!searchQuery.trim()) {
       return suggestions;
     }
     const query = searchQuery.toLowerCase();
-    return suggestions.filter(suggestion => 
-      suggestion.username.toLowerCase().includes(query)
+    return suggestions.filter((suggestion) =>
+      suggestion.username.toLowerCase().includes(query),
     );
   }, [suggestions, searchQuery]);
 
-  // Filter pending requests based on search query
   const filteredPendingRequests = useMemo(() => {
     if (!searchQuery.trim()) {
       return pendingRequests;
     }
     const query = searchQuery.toLowerCase();
-    return pendingRequests.filter(request => 
-      request.username.toLowerCase().includes(query)
+    return pendingRequests.filter((request) =>
+      request.username.toLowerCase().includes(query),
     );
   }, [pendingRequests, searchQuery]);
 
-  // Separate incoming and outgoing requests
-  const incomingRequests = useMemo(() => 
-    filteredPendingRequests.filter(r => r.type === 'incoming'),
-    [filteredPendingRequests]
+  const incomingRequests = useMemo(
+    () => filteredPendingRequests.filter((request) => request.type === 'incoming'),
+    [filteredPendingRequests],
   );
-  
-  const outgoingRequests = useMemo(() => 
-    filteredPendingRequests.filter(r => r.type === 'outgoing'),
-    [filteredPendingRequests]
+
+  const outgoingRequests = useMemo(
+    () => filteredPendingRequests.filter((request) => request.type === 'outgoing'),
+    [filteredPendingRequests],
   );
 
   const renderFriend = (friend: Friend) => (
     <View key={friend.id} style={styles.friendCard}>
       <View style={styles.friendHeader}>
         <View style={styles.profileImageContainer}>
-          <Text style={styles.profileImage}>{friend.profileImage}</Text>
+          <Text style={styles.profileImage}>{friend.profileImage || DEFAULT_PROFILE_IMAGE}</Text>
           {friend.status === 'online' && <View style={styles.onlineIndicator} />}
         </View>
         <View style={styles.friendInfo}>
@@ -123,34 +185,38 @@ export default function FriendsScreen() {
     </View>
   );
 
-  const renderSuggestion = (suggestion: FriendSuggestion) => (
-    <View key={suggestion.id} style={styles.suggestionCard}>
-      <View style={styles.friendHeader}>
-        <View style={styles.profileImageContainer}>
-          <Text style={styles.profileImage}>{suggestion.profileImage}</Text>
+  const renderSuggestion = (suggestion: FriendSuggestion) => {
+    const isLoading = addFriendLoading.has(suggestion.id);
+    return (
+      <View key={suggestion.id} style={styles.suggestionCard}>
+        <View style={styles.friendHeader}>
+          <View style={styles.profileImageContainer}>
+            <Text style={styles.profileImage}>{suggestion.profileImage || DEFAULT_PROFILE_IMAGE}</Text>
+          </View>
+          <View style={styles.friendInfo}>
+            <Text style={styles.username}>{suggestion.username}</Text>
+            <Text style={styles.mutualFriends}>
+              {suggestion.mutualFriends} mutual {suggestion.mutualFriends === 1 ? 'friend' : 'friends'}
+            </Text>
+          </View>
         </View>
-        <View style={styles.friendInfo}>
-          <Text style={styles.username}>{suggestion.username}</Text>
-          <Text style={styles.mutualFriends}>
-            {suggestion.mutualFriends} mutual {suggestion.mutualFriends === 1 ? 'friend' : 'friends'}
-          </Text>
-        </View>
+        <TouchableOpacity
+          style={[styles.addButton, isLoading && styles.addButtonDisabled]}
+          onPress={() => handleAddFriend(suggestion.id)}
+          disabled={isLoading}
+        >
+          <Ionicons name="person-add-outline" size={18} color="#fff" />
+          <Text style={styles.addButtonText}>{isLoading ? 'Sending...' : ' Add'}</Text>
+        </TouchableOpacity>
       </View>
-      <TouchableOpacity
-        style={styles.addButton}
-        onPress={() => handleAddFriend(suggestion.id)}
-      >
-        <Ionicons name="person-add-outline" size={18} color="#fff" />
-        <Text style={styles.addButtonText}> Add</Text>
-      </TouchableOpacity>
-    </View>
-  );
+    );
+  };
 
   const renderPendingRequest = (request: PendingRequest) => (
     <View key={request.id} style={styles.pendingCard}>
       <View style={styles.friendHeader}>
         <View style={styles.profileImageContainer}>
-          <Text style={styles.profileImage}>{request.profileImage}</Text>
+          <Text style={styles.profileImage}>{request.profileImage || DEFAULT_PROFILE_IMAGE}</Text>
         </View>
         <View style={styles.friendInfo}>
           <Text style={styles.username}>{request.username}</Text>
@@ -160,21 +226,20 @@ export default function FriendsScreen() {
             </Text>
           )}
           {request.sentAt && (
-            <Text style={styles.requestTime}>{request.sentAt}</Text>
+            <Text style={styles.requestTime}>
+              {getTimestamp(request.sentAt, request.relativeTimestamp)}
+            </Text>
           )}
         </View>
       </View>
       {request.type === 'incoming' ? (
         <View style={styles.requestActions}>
-          <TouchableOpacity
-            style={styles.declineButton}
-            onPress={() => handleDeclineRequest(request.id)}
-          >
+          <TouchableOpacity style={styles.declineButton} onPress={showUnavailableAction}>
             <Ionicons name="close" size={18} color="#FF3B30" />
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.acceptButton, { marginLeft: 8 }]}
-            onPress={() => handleAcceptRequest(request.id)}
+            onPress={showUnavailableAction}
           >
             <Ionicons name="checkmark" size={18} color="#fff" />
             <Text style={styles.acceptButtonText}> Accept</Text>
@@ -183,10 +248,7 @@ export default function FriendsScreen() {
       ) : (
         <View style={styles.requestActions}>
           <Text style={styles.pendingText}>Pending</Text>
-          <TouchableOpacity
-            style={styles.cancelButton}
-            onPress={() => handleCancelRequest(request.id)}
-          >
+          <TouchableOpacity style={styles.cancelButton} onPress={showUnavailableAction}>
             <Ionicons name="close-circle-outline" size={18} color="#999" />
           </TouchableOpacity>
         </View>
@@ -196,18 +258,13 @@ export default function FriendsScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Tab Selector */}
       <View style={styles.tabContainer}>
         <TouchableOpacity
           style={[styles.tab, activeTab === 'current' && styles.activeTab]}
           onPress={() => setActiveTab('current')}
         >
-          <Text style={[styles.tabText, activeTab === 'current' && styles.activeTabText]}>
-            Current
-          </Text>
-          {activeTab === 'current' && (
-            <View style={styles.tabIndicator} />
-          )}
+          <Text style={[styles.tabText, activeTab === 'current' && styles.activeTabText]}>Current</Text>
+          {activeTab === 'current' && <View style={styles.tabIndicator} />}
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tab, activeTab === 'suggested' && styles.activeTab]}
@@ -216,29 +273,24 @@ export default function FriendsScreen() {
           <Text style={[styles.tabText, activeTab === 'suggested' && styles.activeTabText]}>
             Suggested
           </Text>
-          {activeTab === 'suggested' && (
-            <View style={styles.tabIndicator} />
-          )}
+          {activeTab === 'suggested' && <View style={styles.tabIndicator} />}
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tab, activeTab === 'pending' && styles.activeTab]}
           onPress={() => setActiveTab('pending')}
         >
-          <Text style={[styles.tabText, activeTab === 'pending' && styles.activeTabText]}>
-            Pending
-          </Text>
-          {activeTab === 'pending' && (
-            <View style={styles.tabIndicator} />
-          )}
+          <Text style={[styles.tabText, activeTab === 'pending' && styles.activeTabText]}>Pending</Text>
+          {activeTab === 'pending' && <View style={styles.tabIndicator} />}
         </TouchableOpacity>
       </View>
 
-      {/* Search Bar */}
       <View style={styles.searchContainer}>
         <Ionicons name="search-outline" size={20} color="#999" style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder={`Search ${activeTab === 'current' ? 'friends' : activeTab === 'suggested' ? 'suggestions' : 'requests'}...`}
+          placeholder={`Search ${
+            activeTab === 'current' ? 'friends' : activeTab === 'suggested' ? 'suggestions' : 'requests'
+          }...`}
           placeholderTextColor="#999"
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -251,13 +303,26 @@ export default function FriendsScreen() {
         )}
       </View>
 
-      {/* Content */}
+      {error && (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={() => fetchAll()}>
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#007AFF" />}
       >
-        {activeTab === 'current' ? (
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+          </View>
+        ) : activeTab === 'current' ? (
           <>
             {filteredFriends.length > 0 ? (
               filteredFriends.map(renderFriend)
@@ -370,6 +435,32 @@ const styles = StyleSheet.create({
   },
   clearButton: {
     padding: 4,
+  },
+  errorContainer: {
+    backgroundColor: '#ffecec',
+    borderRadius: 12,
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#ffd6d6',
+  },
+  errorText: {
+    color: '#FF3B30',
+    fontSize: 14,
+    marginBottom: 12,
+  },
+  retryButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#FF3B30',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
   scrollView: {
     flex: 1,
@@ -537,6 +628,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
+  addButtonDisabled: {
+    backgroundColor: '#80bfff',
+  },
   addButtonText: {
     color: '#fff',
     fontSize: 14,
@@ -553,6 +647,10 @@ const styles = StyleSheet.create({
   emptyStateText: {
     fontSize: 16,
     color: '#999',
+  },
+  loadingContainer: {
+    paddingVertical: 32,
+    alignItems: 'center',
   },
 });
 

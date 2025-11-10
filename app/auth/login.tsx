@@ -1,22 +1,41 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useAuthStore } from '../../store/authStore';
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
   const login = useAuthStore((state) => state.login);
 
+  const isDisabled = useMemo(
+    () => loading || username.trim().length === 0 || password.trim().length === 0,
+    [loading, username, password],
+  );
+
   const handleLogin = async () => {
+    if (isDisabled) {
+      return;
+    }
+
     setLoading(true);
-    // Mock login - always succeeds
-    await login();
-    setLoading(false);
-    // Navigate to tabs after successful login
-    router.replace('/(tabs)');
+    setError(null);
+
+    try {
+      await login(username.trim(), password);
+      router.replace('/(tabs)');
+    } catch (authError) {
+      if (authError instanceof Error) {
+        setError(authError.message);
+      } else {
+        setError('Unable to sign in. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -31,13 +50,12 @@ export default function LoginScreen() {
         <View style={styles.form}>
           <TextInput
             style={styles.input}
-            placeholder="Email"
+            placeholder="Username"
             placeholderTextColor="#999"
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
+            value={username}
+            onChangeText={setUsername}
             autoCapitalize="none"
-            autoComplete="email"
+            autoComplete="username"
           />
           <TextInput
             style={styles.input}
@@ -50,10 +68,14 @@ export default function LoginScreen() {
             autoComplete="password"
           />
 
+          {error && (
+            <Text style={styles.errorText}>{error}</Text>
+          )}
+
           <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
+            style={[styles.button, (isDisabled) && styles.buttonDisabled]}
             onPress={handleLogin}
-            disabled={loading}
+            disabled={isDisabled}
           >
             <Text style={styles.buttonText}>
               {loading ? 'Signing in...' : 'Sign In'}
@@ -121,6 +143,11 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  errorText: {
+    color: '#FF3B30',
+    fontSize: 14,
+    marginBottom: 12,
   },
   linkButton: {
     marginTop: 24,

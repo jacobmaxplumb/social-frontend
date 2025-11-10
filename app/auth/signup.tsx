@@ -1,23 +1,51 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useAuthStore } from '../../store/authStore';
 
 export default function SignupScreen() {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
-  const login = useAuthStore((state) => state.login);
+  const register = useAuthStore((state) => state.register);
+
+  const isDisabled = useMemo(() => {
+    return (
+      loading ||
+      username.trim().length === 0 ||
+      password.trim().length === 0 ||
+      confirmPassword.trim().length === 0
+    );
+  }, [loading, username, password, confirmPassword]);
 
   const handleSignup = async () => {
+    if (isDisabled) {
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+
     setLoading(true);
-    // Mock signup - always succeeds
-    await login();
-    setLoading(false);
-    // Navigate to tabs after successful signup
-    router.replace('/(tabs)');
+    setError(null);
+
+    try {
+      await register(username.trim(), password);
+      router.replace('/(tabs)');
+    } catch (authError) {
+      if (authError instanceof Error) {
+        setError(authError.message);
+      } else {
+        setError('Unable to create account. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -32,13 +60,12 @@ export default function SignupScreen() {
         <View style={styles.form}>
           <TextInput
             style={styles.input}
-            placeholder="Email"
+            placeholder="Username"
             placeholderTextColor="#999"
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
+            value={username}
+            onChangeText={setUsername}
             autoCapitalize="none"
-            autoComplete="email"
+            autoComplete="username"
           />
           <TextInput
             style={styles.input}
@@ -61,10 +88,14 @@ export default function SignupScreen() {
             autoComplete="password-new"
           />
 
+          {error && (
+            <Text style={styles.errorText}>{error}</Text>
+          )}
+
           <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
+            style={[styles.button, isDisabled && styles.buttonDisabled]}
             onPress={handleSignup}
-            disabled={loading}
+            disabled={isDisabled}
           >
             <Text style={styles.buttonText}>
               {loading ? 'Creating account...' : 'Sign Up'}
@@ -132,6 +163,11 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  errorText: {
+    color: '#FF3B30',
+    fontSize: 14,
+    marginBottom: 12,
   },
   linkButton: {
     marginTop: 24,
